@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate, requireBusinessAccess } from '../middleware/auth';
 
-const router = Router();
+const router: Router = Router();
 router.use(authenticate);
 
 // GET /api/v1/products - Get all products for a business

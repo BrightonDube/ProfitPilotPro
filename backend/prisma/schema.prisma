@@ -50,6 +50,7 @@ model User {
   orderStatusChanges OrderStatusHistory[] @relation("ChangedBy")
   communicationsSent CustomerCommunication[] @relation("SentBy")
   createdSuppliers Supplier[] @relation("SupplierCreator")
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -622,4 +623,18 @@ model ActivityLog {
   user     User?    @relation(fields: [userId], references: [id])
 
   @@map("activity_log")
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  hashedToken String   @map("hashed_token")
+  expiresAt   DateTime @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
 }

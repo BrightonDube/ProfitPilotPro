@@ -6,8 +6,14 @@ import { generateTokens, verifyToken, authenticate } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
 import { createError } from '../middleware/errorHandler';
 import { z } from 'zod';
+import {
+  verifyGoogleIdToken,
+  upsertGoogleUser,
+  serializeUserForAuthResponse,
+  getAuthUserById,
+} from '../services/auth/google';
 
-const router = Router();
+const router: Router = Router();
 
 // Validation schemas
 const registerSchema = z.object({
@@ -24,6 +30,22 @@ const loginSchema = z.object({
 const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required'),
 });
+
+const googleTokenSchema = z.object({
+  idToken: z.string().min(1, 'Google ID token is required'),
+});
+
+type AuthUser = Awaited<ReturnType<typeof getAuthUserById>> | Awaited<ReturnType<typeof upsertGoogleUser>>;
+
+function buildAuthResponse(user: AuthUser) {
+  const serializedUser = serializeUserForAuthResponse(user);
+  const tokens = generateTokens(user.id);
+
+  return {
+    user: serializedUser,
+    tokens,
+  };
+}
 
 // Register endpoint
 router.post('/register', authRateLimiter, async (req, res, next) => {
@@ -43,7 +65,7 @@ router.post('/register', authRateLimiter, async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // Create user with profile and settings
-    const user = await prisma.user.create({
+    const userRecord = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
@@ -69,22 +91,12 @@ router.post('/register', authRateLimiter, async (req, res, next) => {
       },
     });
 
-    // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user.id);
+    const user = await getAuthUserById(userRecord.id);
+    const response = buildAuthResponse(user);
 
     res.status(201).json({
       message: 'User registered successfully',
-      user: {
-        id: user.id,
-        email: user.email,
-        profile: user.profile,
-        settings: user.settings,
-        emailVerified: user.emailVerified,
-      },
-      tokens: {
-        accessToken,
-        refreshToken,
-      },
+      ...response,
     });
   } catch (error) {
     next(error);
@@ -97,7 +109,7 @@ router.post('/login', authRateLimiter, async (req, res, next) => {
     const { email, password } = loginSchema.parse(req.body);
 
     // Find user
-    const user = await prisma.user.findUnique({
+    const userRecord = await prisma.user.findUnique({
       where: { email },
       include: {
         profile: true,
@@ -105,32 +117,22 @@ router.post('/login', authRateLimiter, async (req, res, next) => {
       },
     });
 
-    if (!user || !user.password) {
+    if (!userRecord || !userRecord.password) {
       throw createError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
     }
 
     // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
+    const isValidPassword = await bcrypt.compare(password, userRecord.password);
     if (!isValidPassword) {
       throw createError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
     }
 
-    // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user.id);
+    const user = await getAuthUserById(userRecord.id);
+    const response = buildAuthResponse(user);
 
     res.json({
       message: 'Login successful',
-      user: {
-        id: user.id,
-        email: user.email,
-        profile: user.profile,
-        settings: user.settings,
-        emailVerified: user.emailVerified,
-      },
-      tokens: {
-        accessToken,
-        refreshToken,
-      },
+      ...response,
     });
   } catch (error) {
     next(error);
@@ -146,24 +148,34 @@ router.post('/refresh', async (req, res, next) => {
     const payload = verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET!) as any;
     
     // Get user
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      include: {
-        profile: true,
-        settings: true,
-      },
-    });
-
-    if (!user) {
-      throw createError('Invalid refresh token', 401, 'INVALID_REFRESH_TOKEN');
-    }
+    const user = await getAuthUserById(payload.sub);
 
     // Generate new tokens
-    const tokens = generateTokens(user.id);
+    const response = buildAuthResponse(user);
 
     res.json({
       message: 'Tokens refreshed successfully',
-      tokens,
+      ...response,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Google token exchange (web/mobile clients)
+router.post('/google/token', authRateLimiter, async (req, res, next) => {
+  try {
+    const { idToken } = googleTokenSchema.parse(req.body);
+
+    const googleProfile = await verifyGoogleIdToken(idToken);
+    const user = await upsertGoogleUser(googleProfile);
+
+    const response = buildAuthResponse(user);
+
+    res.json({
+      message: 'Google login successful',
+      provider: 'google',
+      ...response,
     });
   } catch (error) {
     next(error);
@@ -232,13 +244,20 @@ router.get('/google',
 
 router.get('/google/callback',
   passport.authenticate('google', { session: false }),
-  (req, res) => {
-    const user = req.user as any;
-    const { accessToken, refreshToken } = generateTokens(user.id);
-    
-    // Redirect to frontend with tokens
-    const frontendUrl = process.env.WEB_URL || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/auth/callback?token=${accessToken}&refresh=${refreshToken}`);
+  async (req, res, next) => {
+    try {
+      const user = await getAuthUserById((req.user as any).id);
+      const response = buildAuthResponse(user);
+
+      const frontendUrl = process.env.WEB_URL || 'http://localhost:3000';
+      const callbackUrl = new URL('/auth/callback', frontendUrl);
+      callbackUrl.searchParams.set('token', response.tokens.accessToken);
+      callbackUrl.searchParams.set('refresh', response.tokens.refreshToken);
+
+      res.redirect(callbackUrl.toString());
+    } catch (error) {
+      next(error);
+    }
   }
 );
 

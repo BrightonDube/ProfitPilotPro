@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/database';
 import { authenticate, requireBusinessAccess } from '../middleware/auth';
 
-const router = Router();
+const router: Router = Router();
 router.use(authenticate);
 
 // Validation schemas

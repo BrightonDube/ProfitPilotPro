@@ -4,7 +4,7 @@ import { authenticate, requireBusinessAccess, requireAdmin } from '../middleware
 import { createError } from '../middleware/errorHandler';
 import { z } from 'zod';
 
-const router = Router();
+const router: Router = Router();
 
 // All routes require authentication
 router.use(authenticate);

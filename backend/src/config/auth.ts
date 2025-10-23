@@ -3,6 +3,8 @@ import { Strategy as JwtStrategy, ExtractJwt, StrategyOptions } from 'passport-j
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as GitHubStrategy } from 'passport-github2';
 import { prisma } from './database';
+import { upsertGoogleUser } from '../services/auth/google';
+import { createError } from '../middleware/errorHandler';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
@@ -47,69 +49,18 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
     callbackURL: '/api/v1/auth/google/callback',
   }, async (accessToken, refreshToken, profile, done) => {
     try {
-      // Check if user already exists
-      let user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { email: profile.emails?.[0]?.value },
-            { 
-              provider: 'google',
-              providerId: profile.id 
-            }
-          ]
-        },
-        include: {
-          profile: true,
-          settings: true,
-        },
-      });
-
-      if (user) {
-        // Update provider info if needed
-        if (user.provider !== 'google' || user.providerId !== profile.id) {
-          user = await prisma.user.update({
-            where: { id: user.id },
-            data: {
-              provider: 'google',
-              providerId: profile.id,
-              emailVerified: true,
-            },
-            include: {
-              profile: true,
-              settings: true,
-            },
-          });
-        }
-      } else {
-        // Create new user
-        user = await prisma.user.create({
-          data: {
-            email: profile.emails?.[0]?.value || '',
-            provider: 'google',
-            providerId: profile.id,
-            emailVerified: true,
-            profile: {
-              create: {
-                email: profile.emails?.[0]?.value || '',
-                fullName: profile.displayName,
-                avatarUrl: profile.photos?.[0]?.value,
-                provider: 'google',
-                emailVerified: true,
-              }
-            },
-            settings: {
-              create: {
-                hourlyRate: 15.00,
-                defaultMargin: 40.00,
-              }
-            }
-          },
-          include: {
-            profile: true,
-            settings: true,
-          },
-        });
+      const email = profile.emails?.[0]?.value;
+      if (!email) {
+        return done(createError('Google account email is required', 400, 'GOOGLE_EMAIL_REQUIRED'));
       }
+
+      const user = await upsertGoogleUser({
+        id: profile.id,
+        email,
+        name: profile.displayName || email,
+        picture: profile.photos?.[0]?.value,
+        emailVerified: true,
+      });
 
       return done(null, user);
     } catch (error) {
