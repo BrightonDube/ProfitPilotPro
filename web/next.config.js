@@ -9,7 +9,7 @@ const nextConfig = {
     ignoreDuringBuilds: false,
   },
   experimental: {
-    typedRoutes: true,
+    typedRoutes: false,
   },
   images: {
     domains: [

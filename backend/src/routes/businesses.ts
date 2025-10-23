@@ -29,8 +29,13 @@ router.post('/', async (req, res, next) => {
     // Create business with the user as admin
     const business = await prisma.business.create({
       data: {
-        ...data,
-        createdBy: userId,
+        name: data.name,
+        description: data.description,
+        address: data.address,
+        phone: data.phone,
+        email: data.email,
+        website: data.website,
+        creator: { connect: { id: userId } },
         users: {
           create: {
             userId,

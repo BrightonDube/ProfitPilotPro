@@ -41,8 +41,9 @@ async function generateExpenseNumber(businessId: string): Promise<string> {
   const lastExpense = await prisma.expense.findFirst({
     where: {
       businessId,
-      id: {
-        startsWith: prefix,
+      description: {
+        contains: prefix,
+        mode: 'insensitive',
       },
     },
     orderBy: {
@@ -155,7 +156,6 @@ router.get('/', requireBusinessAccess(), async (req, res) => {
     where.OR = [
       { description: { contains: search as string, mode: 'insensitive' } },
       { vendor: { contains: search as string, mode: 'insensitive' } },
-      { notes: { contains: search as string, mode: 'insensitive' } },
     ];
   }
 
@@ -279,7 +279,6 @@ router.post('/', requireBusinessAccess(), async (req, res) => {
       paymentMethod: validatedData.paymentMethod,
       vendor: validatedData.supplierName,
       receiptUrl: validatedData.receiptUrl,
-      notes: validatedData.notes,
       taxDeductible: validatedData.taxDeductible,
       isRecurring: validatedData.isRecurring,
       recurringFrequency: validatedData.recurringFrequency,
@@ -350,7 +349,6 @@ router.put('/:id', requireBusinessAccess(), async (req, res) => {
       paymentMethod: validatedData.paymentMethod,
       vendor: validatedData.supplierName,
       receiptUrl: validatedData.receiptUrl,
-      notes: validatedData.notes,
       taxDeductible: validatedData.taxDeductible,
       isRecurring: validatedData.isRecurring,
       recurringFrequency: validatedData.recurringFrequency,

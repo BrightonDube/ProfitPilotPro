@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import passport from 'passport';
-import jwt from 'jsonwebtoken';
+import { sign, verify, Secret, SignOptions } from 'jsonwebtoken';
 import { prisma } from '../config/database';
 import { createError } from './errorHandler';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
+const JWT_SECRET: Secret = (process.env.JWT_SECRET as unknown as Secret);
+const JWT_REFRESH_SECRET: Secret = (process.env.JWT_REFRESH_SECRET as unknown as Secret);
 
 export interface AuthenticatedRequest extends Request {
   user?: any;
@@ -19,21 +19,21 @@ export const generateTokens = (userId: string) => {
     aud: 'bizpilot-app',
   };
 
-  const accessToken = jwt.sign(payload, JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '15m',
-  });
+  const accessToken = sign(payload, JWT_SECRET, {
+    expiresIn: (process.env.JWT_EXPIRES_IN || '15m') as unknown as SignOptions['expiresIn'],
+  } as SignOptions);
 
-  const refreshToken = jwt.sign(payload, JWT_REFRESH_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
-  });
+  const refreshToken = sign(payload, JWT_REFRESH_SECRET, {
+    expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || '7d') as unknown as SignOptions['expiresIn'],
+  } as SignOptions);
 
   return { accessToken, refreshToken };
 };
 
 // Verify JWT token
-export const verifyToken = (token: string, secret: string = JWT_SECRET) => {
+export const verifyToken = (token: string, secret: Secret = JWT_SECRET) => {
   try {
-    return jwt.verify(token, secret);
+    return verify(token, secret);
   } catch (error) {
     throw createError('Invalid or expired token', 401, 'INVALID_TOKEN');
   }
