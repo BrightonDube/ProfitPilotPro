@@ -110,9 +110,18 @@ export const requireBusinessAccess = (requiredRole?: string[]) => {
       }
 
       // Add business context to request
+      if (req.user) {
+        req.user = {
+          ...req.user,
+          businessId,
+          role: businessUser.role,
+        };
+      }
+
       (req as any).business = businessUser.business;
       (req as any).userRole = businessUser.role;
-      
+      (req as any).businessId = businessId;
+
       next();
     } catch (error) {
       next(error);

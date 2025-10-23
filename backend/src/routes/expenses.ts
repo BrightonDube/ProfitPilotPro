@@ -154,7 +154,7 @@ router.get('/', requireBusinessAccess(), async (req, res) => {
   if (search) {
     where.OR = [
       { description: { contains: search as string, mode: 'insensitive' } },
-      { supplierName: { contains: search as string, mode: 'insensitive' } },
+      { vendor: { contains: search as string, mode: 'insensitive' } },
       { notes: { contains: search as string, mode: 'insensitive' } },
     ];
   }
@@ -194,8 +194,13 @@ router.get('/', requireBusinessAccess(), async (req, res) => {
     prisma.expense.count({ where }),
   ]);
 
+  const expensesWithSupplierName = expenses.map(expense => ({
+    ...expense,
+    supplierName: expense.vendor,
+  }));
+
   res.json({
-    expenses,
+    expenses: expensesWithSupplierName,
     pagination: {
       total,
       page: parseInt(page as string),
@@ -235,7 +240,10 @@ router.get('/:id', requireBusinessAccess(), async (req, res) => {
     return res.status(404).json({ error: 'Expense not found' });
   }
 
-  res.json(expense);
+  res.json({
+    ...expense,
+    supplierName: expense.vendor,
+  });
 });
 
 // POST /expenses - Create expense
@@ -269,7 +277,7 @@ router.post('/', requireBusinessAccess(), async (req, res) => {
       description: validatedData.description,
       expenseDate: validatedData.expenseDate ? new Date(validatedData.expenseDate) : new Date(),
       paymentMethod: validatedData.paymentMethod,
-      supplierName: validatedData.supplierName,
+      vendor: validatedData.supplierName,
       receiptUrl: validatedData.receiptUrl,
       notes: validatedData.notes,
       taxDeductible: validatedData.taxDeductible,
@@ -293,7 +301,10 @@ router.post('/', requireBusinessAccess(), async (req, res) => {
     },
   });
 
-  res.status(201).json(expense);
+  res.status(201).json({
+    ...expense,
+    supplierName: expense.vendor,
+  });
 });
 
 // PUT /expenses/:id - Update expense
@@ -337,7 +348,7 @@ router.put('/:id', requireBusinessAccess(), async (req, res) => {
       description: validatedData.description,
       expenseDate: validatedData.expenseDate ? new Date(validatedData.expenseDate) : undefined,
       paymentMethod: validatedData.paymentMethod,
-      supplierName: validatedData.supplierName,
+      vendor: validatedData.supplierName,
       receiptUrl: validatedData.receiptUrl,
       notes: validatedData.notes,
       taxDeductible: validatedData.taxDeductible,
@@ -361,7 +372,10 @@ router.put('/:id', requireBusinessAccess(), async (req, res) => {
     },
   });
 
-  res.json(expense);
+  res.json({
+    ...expense,
+    supplierName: expense.vendor,
+  });
 });
 
 // DELETE /expenses/:id - Delete expense
@@ -448,6 +462,8 @@ router.get('/stats/summary', requireBusinessAccess(), async (req, res) => {
     `,
   ]);
 
+  const totalExpenseAmount = totalExpenses._sum.amount?.toNumber() ?? 0;
+
   // Get category names for breakdown
   const categoryIds = categoryBreakdown.map(item => item.categoryId).filter(Boolean);
   const categories = await prisma.expenseCategory.findMany({
@@ -468,18 +484,18 @@ router.get('/stats/summary', requireBusinessAccess(), async (req, res) => {
   const categoryBreakdownWithNames = categoryBreakdown.map(item => ({
     categoryId: item.categoryId,
     categoryName: item.categoryId ? categoryMap[item.categoryId] || 'Unknown' : 'Uncategorized',
-    totalAmount: item._sum.amount || 0,
+    totalAmount: item._sum.amount?.toNumber() ?? 0,
     count: item._count.categoryId,
   }));
 
   res.json({
-    totalExpenses: totalExpenses._sum.amount || 0,
+    totalExpenses: totalExpenseAmount,
     expenseCount,
-    averageExpense: expenseCount > 0 ? (totalExpenses._sum.amount || 0) / expenseCount : 0,
+    averageExpense: expenseCount > 0 ? totalExpenseAmount / expenseCount : 0,
     categoryBreakdown: categoryBreakdownWithNames,
     paymentMethodBreakdown: paymentMethodBreakdown.map(item => ({
       paymentMethod: item.paymentMethod,
-      totalAmount: item._sum.amount || 0,
+      totalAmount: item._sum.amount?.toNumber() ?? 0,
       count: item._count.paymentMethod,
     })),
     monthlyTrend,

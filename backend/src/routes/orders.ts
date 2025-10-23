@@ -270,7 +270,9 @@ router.post('/', requireBusinessAccess(), async (req, res) => {
           where: { id: item.inventoryId },
         });
 
-        if (inventory && inventory.currentQuantity >= item.quantity) {
+        const currentQuantity = inventory?.currentQuantity?.toNumber() ?? 0;
+
+        if (inventory && currentQuantity >= item.quantity) {
           await tx.inventory.update({
             where: { id: item.inventoryId },
             data: {
@@ -280,6 +282,8 @@ router.post('/', requireBusinessAccess(), async (req, res) => {
             },
           });
 
+          const updatedQuantity = currentQuantity - item.quantity;
+
           // Create inventory transaction
           await tx.inventoryTransaction.create({
             data: {
@@ -288,7 +292,7 @@ router.post('/', requireBusinessAccess(), async (req, res) => {
               inventoryId: item.inventoryId,
               type: 'sale',
               quantityChange: -item.quantity,
-              newQuantity: inventory.currentQuantity - item.quantity,
+              newQuantity: updatedQuantity,
               notes: `Sale - Order ${orderNumber}`,
             },
           });
@@ -542,10 +546,13 @@ router.get('/stats/summary', requireBusinessAccess(), async (req, res) => {
     }),
   ]);
 
+  const totalRevenueAmount = totalRevenue._sum.totalAmount?.toNumber() ?? 0;
+  const averageOrderValueAmount = averageOrderValue._avg.totalAmount?.toNumber() ?? 0;
+
   res.json({
     totalOrders,
-    totalRevenue: totalRevenue._sum.totalAmount || 0,
-    averageOrderValue: averageOrderValue._avg.totalAmount || 0,
+    totalRevenue: totalRevenueAmount,
+    averageOrderValue: averageOrderValueAmount,
     statusBreakdown: statusBreakdown.reduce((acc, item) => {
       acc[item.status || 'unknown'] = item._count.status;
       return acc;
