@@ -1,6 +1,9 @@
 # Backend Dockerfile
 FROM node:18-alpine AS base
 
+# Prisma requires OpenSSL 1.1 on Alpine
+RUN apk add --no-cache openssl1.1-compat
+
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
