@@ -1,8 +1,7 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import passport from '../config/auth';
 import { prisma } from '../config/database';
-import { generateTokens, verifyToken, authenticate } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
 import { createError } from '../middleware/errorHandler';
 import { z } from 'zod';
@@ -12,6 +11,16 @@ import {
   serializeUserForAuthResponse,
   getAuthUserById,
 } from '../services/auth/google';
+import {
+  issueTokenPair,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  extractRoleContext,
+  signAccessToken,
+  buildRefreshCookieOptions,
+  REFRESH_COOKIE_NAME,
+} from '../services/auth/tokens';
+import { verifyAccessToken } from '../middleware/verifyAccessToken';
 
 const router: Router = Router();
 
@@ -27,24 +36,75 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
-const refreshTokenSchema = z.object({
-  refreshToken: z.string().min(1, 'Refresh token is required'),
-});
-
 const googleTokenSchema = z.object({
   idToken: z.string().min(1, 'Google ID token is required'),
 });
 
 type AuthUser = Awaited<ReturnType<typeof getAuthUserById>> | Awaited<ReturnType<typeof upsertGoogleUser>>;
 
-function buildAuthResponse(user: AuthUser) {
-  const serializedUser = serializeUserForAuthResponse(user);
-  const tokens = generateTokens(user.id);
+const BROWSER_USER_AGENT_REGEX = /(mozilla|chrome|safari|firefox|edge|trident)/i;
 
-  return {
+function isBrowserClient(req: Request) {
+  const userAgent = req.headers['user-agent'] ?? '';
+  return BROWSER_USER_AGENT_REGEX.test(userAgent);
+}
+
+function logAuthEvent(event: string, meta: Record<string, unknown>) {
+  console.info(JSON.stringify({
+    event,
+    component: 'auth-routes',
+    timestamp: new Date().toISOString(),
+    ...meta,
+  }));
+}
+
+type AuthResponseTokens = {
+  accessToken: string;
+  refreshToken?: string;
+  refreshExpiresAt?: Date;
+};
+
+async function buildAuthSuccessResponse(
+  req: Request,
+  res: Response,
+  user: AuthUser,
+  tokens: AuthResponseTokens,
+  event: string = 'auth.success'
+) {
+  const serializedUser = serializeUserForAuthResponse(user);
+  const isBrowser = isBrowserClient(req);
+
+  const { accessToken, refreshToken, refreshExpiresAt } = tokens;
+
+  if (isBrowser && refreshToken && refreshExpiresAt) {
+    res.cookie(REFRESH_COOKIE_NAME, refreshToken, buildRefreshCookieOptions(refreshExpiresAt));
+  }
+
+  const responsePayload = {
     user: serializedUser,
-    tokens,
+    accessToken,
+    refreshExpiresAt: refreshExpiresAt?.toISOString(),
+    ...(isBrowser
+      ? { refreshToken: undefined }
+      : { refreshToken }),
   };
+
+  logAuthEvent(event, {
+    userId: user.id,
+    provider: user.provider,
+    browser: isBrowser,
+  });
+
+  return responsePayload;
+}
+
+async function clearRefreshCookie(res: Response) {
+  res.clearCookie(REFRESH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    path: '/',
+  });
 }
 
 // Register endpoint
@@ -92,7 +152,8 @@ router.post('/register', authRateLimiter, async (req, res, next) => {
     });
 
     const user = await getAuthUserById(userRecord.id);
-    const response = buildAuthResponse(user);
+    const tokenPair = await issueTokenPair(user.id, user);
+    const response = await buildAuthSuccessResponse(req, res, user, tokenPair, 'auth.register');
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -128,7 +189,8 @@ router.post('/login', authRateLimiter, async (req, res, next) => {
     }
 
     const user = await getAuthUserById(userRecord.id);
-    const response = buildAuthResponse(user);
+    const tokenPair = await issueTokenPair(user.id, user);
+    const response = await buildAuthSuccessResponse(req, res, user, tokenPair, 'auth.login');
 
     res.json({
       message: 'Login successful',
@@ -142,16 +204,23 @@ router.post('/login', authRateLimiter, async (req, res, next) => {
 // Refresh token endpoint
 router.post('/refresh', async (req, res, next) => {
   try {
-    const { refreshToken } = refreshTokenSchema.parse(req.body);
+    const cookieRefreshToken = req.cookies?.[REFRESH_COOKIE_NAME];
+    const requestRefreshToken = (req.body?.refreshToken as string | undefined) ?? undefined;
+    const refreshToken = cookieRefreshToken || requestRefreshToken;
 
-    // Verify refresh token
-    const payload = verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET!) as any;
-    
-    // Get user
-    const user = await getAuthUserById(payload.sub);
+    if (!refreshToken) {
+      throw createError('Refresh token is required', 400, 'MISSING_REFRESH_TOKEN');
+    }
 
-    // Generate new tokens
-    const response = buildAuthResponse(user);
+    const { tokenRecord, newRawToken, expiresAt } = await rotateRefreshToken(refreshToken);
+    const user = await getAuthUserById(tokenRecord.userId);
+    const { roles, businessIds } = extractRoleContext(user);
+    const newAccessToken = signAccessToken(user.id, roles, businessIds);
+    const response = await buildAuthSuccessResponse(req, res, user, {
+      accessToken: newAccessToken,
+      refreshToken: newRawToken,
+      refreshExpiresAt: expiresAt,
+    }, 'auth.refresh');
 
     res.json({
       message: 'Tokens refreshed successfully',
@@ -170,7 +239,8 @@ router.post('/google/token', authRateLimiter, async (req, res, next) => {
     const googleProfile = await verifyGoogleIdToken(idToken);
     const user = await upsertGoogleUser(googleProfile);
 
-    const response = buildAuthResponse(user);
+    const tokenPair = await issueTokenPair(user.id, user);
+    const response = await buildAuthSuccessResponse(req, res, user, tokenPair, 'auth.google');
 
     res.json({
       message: 'Google login successful',
@@ -183,47 +253,22 @@ router.post('/google/token', authRateLimiter, async (req, res, next) => {
 });
 
 // Get current user
-router.get('/me', authenticate, async (req, res, next) => {
+router.get('/me', verifyAccessToken, async (req, res, next) => {
   try {
-    const userId = (req as any).user.id;
+    const authUser = req.authUser;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        profile: {
-          include: {
-            business: true,
-          }
-        },
-        settings: {
-          include: {
-            business: true,
-          }
-        },
-        businessUsers: {
-          where: { isActive: true },
-          include: {
-            business: true,
-          }
-        }
-      },
-    });
-
-    if (!user) {
-      throw createError('User not found', 404, 'USER_NOT_FOUND');
+    if (!authUser) {
+      throw createError('User not authenticated', 401, 'UNAUTHORIZED');
     }
 
     res.json({
       user: {
-        id: user.id,
-        email: user.email,
-        provider: user.provider,
-        emailVerified: user.emailVerified,
-        profile: user.profile,
-        settings: user.settings,
-        businesses: user.businessUsers.map(bu => ({
-          id: bu.business.id,
-          name: bu.business.name,
+        id: authUser.id,
+        email: authUser.email,
+        provider: authUser.provider,
+        emailVerified: authUser.emailVerified,
+        businesses: authUser.businessUsers.map((bu) => ({
+          id: bu.businessId,
           role: bu.role,
           isActive: bu.isActive,
         })),
@@ -247,12 +292,19 @@ router.get('/google/callback',
   async (req, res, next) => {
     try {
       const user = await getAuthUserById((req.user as any).id);
-      const response = buildAuthResponse(user);
+      const tokenPair = await issueTokenPair(user.id, user);
+      const isBrowser = isBrowserClient(req);
+
+      if (isBrowser && tokenPair.refreshToken && tokenPair.refreshExpiresAt) {
+        res.cookie(REFRESH_COOKIE_NAME, tokenPair.refreshToken, buildRefreshCookieOptions(tokenPair.refreshExpiresAt));
+      }
 
       const frontendUrl = process.env.WEB_URL || 'http://localhost:3000';
       const callbackUrl = new URL('/auth/callback', frontendUrl);
-      callbackUrl.searchParams.set('token', response.tokens.accessToken);
-      callbackUrl.searchParams.set('refresh', response.tokens.refreshToken);
+      callbackUrl.searchParams.set('token', tokenPair.accessToken);
+      if (!isBrowser && tokenPair.refreshToken) {
+        callbackUrl.searchParams.set('refresh', tokenPair.refreshToken);
+      }
 
       res.redirect(callbackUrl.toString());
     } catch (error) {
@@ -271,21 +323,56 @@ router.get('/github',
 
 router.get('/github/callback',
   passport.authenticate('github', { session: false }),
-  (req, res) => {
-    const user = req.user as any;
-    const { accessToken, refreshToken } = generateTokens(user.id);
-    
-    // Redirect to frontend with tokens
-    const frontendUrl = process.env.WEB_URL || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/auth/callback?token=${accessToken}&refresh=${refreshToken}`);
+  async (req, res, next) => {
+    try {
+      const user = await getAuthUserById((req.user as any).id);
+      const tokenPair = await issueTokenPair(user.id, user);
+      const isBrowser = isBrowserClient(req);
+
+      if (isBrowser && tokenPair.refreshToken && tokenPair.refreshExpiresAt) {
+        res.cookie(REFRESH_COOKIE_NAME, tokenPair.refreshToken, buildRefreshCookieOptions(tokenPair.refreshExpiresAt));
+      }
+
+      const frontendUrl = process.env.WEB_URL || 'http://localhost:3000';
+      const redirectUrl = new URL('/auth/callback', frontendUrl);
+      redirectUrl.searchParams.set('token', tokenPair.accessToken);
+      if (!isBrowser && tokenPair.refreshToken) {
+        redirectUrl.searchParams.set('refresh', tokenPair.refreshToken);
+      }
+
+      res.redirect(redirectUrl.toString());
+    } catch (error) {
+      next(error);
+    }
   }
 );
 
 // Logout endpoint (client-side token invalidation)
-router.post('/logout', authenticate, (req, res) => {
-  res.json({
-    message: 'Logout successful. Please remove tokens from client storage.',
-  });
+router.post('/logout', verifyAccessToken, async (req, res, next) => {
+  try {
+    const cookieRefreshToken = req.cookies?.[REFRESH_COOKIE_NAME];
+    const bodyRefreshToken = req.body?.refreshToken as string | undefined;
+
+    if (cookieRefreshToken) {
+      await revokeRefreshToken(cookieRefreshToken);
+    }
+
+    if (bodyRefreshToken) {
+      await revokeRefreshToken(bodyRefreshToken);
+    }
+
+    await clearRefreshCookie(res);
+
+    logAuthEvent('auth.logout', {
+      userId: req.authUser?.id,
+    });
+
+    res.json({
+      message: 'Logout successful',
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Password reset request
@@ -305,7 +392,7 @@ router.post('/forgot-password', authRateLimiter, async (req, res, next) => {
     // TODO: Implement email service for password reset
     // For now, just log the reset token
     if (user && user.password) { // Only for email users
-      const resetToken = generateTokens(user.id).accessToken;
+      const resetToken = signAccessToken(user.id, ['password-reset'], []);
       console.log(`Password reset token for ${email}: ${resetToken}`);
     }
   } catch (error) {

@@ -6,14 +6,25 @@ A scalable, full-stack business management platform built with modern technologi
 
 BizPilot has been refactored into a modern, scalable monorepo architecture:
 
-```
-BizPilot/
-├── backend/           # Node.js/TypeScript API
-├── web/              # Next.js/TypeScript Frontend
-├── mobile/           # React Native App
-├── shared/           # Shared types and utilities
-├── docker-compose.yml # Development environment
-└── DEPLOYMENT.md     # Deployment guide
+```mermaid
+graph TD
+  root[BizPilot Monorepo]
+  root --> backend[backend/]
+  root --> web[web/]
+  root --> mobile[mobile/]
+  root --> shared[shared/]
+  root --> docker[docker-compose.yml]
+  root --> deploy[DEPLOYMENT.md]
+
+  backend --> backend_src[src/]
+  backend --> backend_prisma[prisma/]
+  backend --> backend_tests[src/__tests__/]
+  web --> web_app[src/app/]
+  web --> web_components[src/components/]
+  mobile --> mobile_app[app/]
+  mobile --> mobile_assets[assets/]
+  shared --> shared_types[types/]
+  shared --> shared_utils[utils/]
 ```
 
 ## 🚀 Technology Stack
