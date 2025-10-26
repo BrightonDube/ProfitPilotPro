@@ -40,6 +40,7 @@ export default withAuth(
     callbacks: {
       authorized: () => true,
     },
+    secret: process.env.AUTH_SECRET,
   }
 )
 
