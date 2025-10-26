@@ -4,7 +4,8 @@
   "description": "BizPilot Backend API - Node.js/TypeScript/Express",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "nodemon src/index.ts",
+    "dev:tsx": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",

@@ -33,6 +33,13 @@
       "@/utils": ["./src/utils/index"]
     }
   },
+  "ts-node": {
+    "transpileOnly": true,
+    "files": true,
+    "compilerOptions": {
+      "module": "commonjs"
+    }
+  },
   "include": [
     "src/**/*"
   ],

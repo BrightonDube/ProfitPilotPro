@@ -5,8 +5,12 @@ import { Strategy as GitHubStrategy } from 'passport-github2';
 import { prisma } from './database';
 import { upsertGoogleUser } from '../services/auth/google';
 import { createError } from '../middleware/errorHandler';
+import dotenv from 'dotenv';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
+// Load environment variables
+dotenv.config();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID!;

@@ -1,0 +1,55 @@
+### Test Authentication Endpoints
+### You can use this file with REST Client extension in VS Code
+
+### 1. Health Check - Should work immediately
+GET http://localhost:5000/health
+
+###
+
+### 2. Register a new user
+POST http://localhost:5000/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Test1234!",
+  "fullName": "Test User"
+}
+
+###
+
+### 3. Login with email/password
+POST http://localhost:5000/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Test1234!"
+}
+
+###
+
+### 4. Get current user (replace YOUR_TOKEN with the token from login response)
+GET http://localhost:5000/api/v1/auth/me
+Authorization: Bearer YOUR_TOKEN
+
+###
+
+### 5. Test Google OAuth (open in browser)
+# http://localhost:5000/api/v1/auth/google
+
+###
+
+### 6. Refresh token
+POST http://localhost:5000/api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "YOUR_REFRESH_TOKEN"
+}
+
+###
+
+### 7. Logout
+POST http://localhost:5000/api/v1/auth/logout
+Authorization: Bearer YOUR_TOKEN
