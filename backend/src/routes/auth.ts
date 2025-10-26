@@ -280,12 +280,19 @@ router.get('/me', verifyAccessToken, async (req, res, next) => {
 });
 
 // Google OAuth routes
-router.get('/google', 
+router.get('/google', (req, res, next) => {
+  if (!process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID === 'your-google-oauth-client-id') {
+    return res.status(503).json({
+      error: 'Service Unavailable',
+      message: 'Google OAuth is not configured. Please set up Google OAuth credentials in the environment variables.',
+      code: 'OAUTH_NOT_CONFIGURED'
+    });
+  }
   passport.authenticate('google', { 
     scope: ['profile', 'email'],
     session: false 
-  })
-);
+  })(req, res, next);
+});
 
 router.get('/google/callback',
   passport.authenticate('google', { session: false }),
@@ -314,12 +321,19 @@ router.get('/google/callback',
 );
 
 // GitHub OAuth routes
-router.get('/github',
+router.get('/github', (req, res, next) => {
+  if (!process.env.GITHUB_CLIENT_ID || process.env.GITHUB_CLIENT_ID === 'your-github-oauth-client-id') {
+    return res.status(503).json({
+      error: 'Service Unavailable',
+      message: 'GitHub OAuth is not configured. Please set up GitHub OAuth credentials in the environment variables.',
+      code: 'OAUTH_NOT_CONFIGURED'
+    });
+  }
   passport.authenticate('github', { 
     scope: ['user:email'],
     session: false 
-  })
-);
+  })(req, res, next);
+});
 
 router.get('/github/callback',
   passport.authenticate('github', { session: false }),
@@ -373,6 +387,18 @@ router.post('/logout', verifyAccessToken, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// OAuth error handler
+router.get('/error', (req, res) => {
+  const error = req.query.error as string || 'Unknown error';
+  const frontendUrl = process.env.WEB_URL || 'http://localhost:3000';
+  
+  // Redirect to frontend with error
+  const errorUrl = new URL('/auth/error', frontendUrl);
+  errorUrl.searchParams.set('error', error);
+  
+  res.redirect(errorUrl.toString());
 });
 
 // Password reset request
